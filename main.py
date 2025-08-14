@@ -54,7 +54,6 @@ class DistractionDetector:
         results = self.face_mesh.process(rgb)
 
         if results.multi_face_landmarks:
-            # Select the largest face (closest to camera)
             h, w, _ = frame.shape
             largest_area = 0
             main_face = None
@@ -70,7 +69,7 @@ class DistractionDetector:
 
             face_landmarks = main_face
 
-            # Eyes
+            # Eyes indices
             left_eye_idx = [33, 160, 158, 133, 153, 144]
             right_eye_idx = [362, 385, 387, 263, 373, 380]
 
@@ -79,12 +78,12 @@ class DistractionDetector:
             right_eye = [(int(face_landmarks.landmark[i].x * w),
                           int(face_landmarks.landmark[i].y * h)) for i in right_eye_idx]
 
-            # Nose tip
+            # Nose tip for direction
             nose_tip = face_landmarks.landmark[1]
             nose_x = nose_tip.x * w
             frame_center_x = w / 2
 
-            # EAR
+            # Compute EAR
             ear = (self.eye_aspect_ratio(left_eye) + self.eye_aspect_ratio(right_eye)) / 2.0
 
             # Eye closure detection
@@ -101,10 +100,8 @@ class DistractionDetector:
             else:
                 self.eye_close_start = None
                 eye_timer_display = 0
-                if self.eye_alert_on:
-                    self.normal_start_time = time.time()
 
-            # Looking away detection with direction
+            # Looking away detection
             if nose_x < frame_center_x - 50:
                 direction_text = "Looking Left"
             elif nose_x > frame_center_x + 50:
@@ -125,14 +122,25 @@ class DistractionDetector:
             else:
                 self.look_away_start = None
                 away_timer_display = 0
-                if self.look_away_alert_on or self.eye_alert_on:
-                    self.normal_start_time = time.time()
 
             self.look_direction = direction_text
 
             # Draw eyes
             for (x, y) in left_eye + right_eye:
                 cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
+
+            # === FIX: Stop buzzer after coming back to normal ===
+            is_eye_normal = ear >= self.EYE_AR_THRESH
+            is_looking_forward = direction_text == "Forward"
+
+            # Start timer only once when first normal frame appears after alert
+            if is_eye_normal and is_looking_forward:
+                if self.eye_alert_on or self.look_away_alert_on:
+                    if self.normal_start_time is None:
+                        self.normal_start_time = time.time()
+            else:
+                # Reset timer if any abnormal condition
+                self.normal_start_time = None
 
         else:
             # No face detected
@@ -141,10 +149,9 @@ class DistractionDetector:
             eye_timer_display = 0
             away_timer_display = 0
             direction_text = "No Face Detected"
-            if self.eye_alert_on or self.look_away_alert_on:
-                self.normal_start_time = time.time()
+            self.normal_start_time = None
 
-        # Stop buzzer 2s after normal
+        # Stop buzzer after BUZZER_STOP_DELAY seconds of normal
         if self.normal_start_time is not None:
             if time.time() - self.normal_start_time >= self.BUZZER_STOP_DELAY:
                 self._stop_buzzer()
